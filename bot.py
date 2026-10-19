@@ -64,16 +64,45 @@ def on_connected(_: NewClient, __: ConnectedEv):
     print(" ✅ Bot Click&Cut Store CONECTADO A WHATSAPP ")
     print("*"*45 + "\n")
 
-@client.event(MessageEv)
+
 def on_message(cl: NewClient, message: MessageEv):
     try:
         if message.Info.IsFromMe:
             return
+@client.event(MessageEv)
+def on_message(cl: NewClient, message: MessageEv):
+    try:
+        # Validación de seguridad: ignorar si no contiene información básica de mensaje
+        if not hasattr(message, "Info") or message.Info is None:
+            return
 
-        remitente = message.Info.Sender.User
-        push_name = message.Info.PushName or "Cliente"
-        texto = (message.Message.conversation or message.Message.extendedTextMessage.text or "").strip()
+        # Verificar si el mensaje fue enviado por el propio bot
+        is_from_me = getattr(message.Info, "IsFromMe", False)
+        if is_from_me:
+            return
 
+        # Obtener remitente de forma segura
+        sender = getattr(message.Info, "Sender", None)
+        if not sender:
+            return
+        remitente = getattr(sender, "User", "")
+        if not remitente:
+            return
+
+        push_name = getattr(message.Info, "PushName", "") or "Cliente"
+
+        # Extraer texto según los diferentes tipos de mensaje
+        msg_obj = getattr(message, "Message", None)
+        if not msg_obj:
+            return
+
+        texto = ""
+        if hasattr(msg_obj, "conversation") and msg_obj.conversation:
+            texto = msg_obj.conversation
+        elif hasattr(msg_obj, "extendedTextMessage") and msg_obj.extendedTextMessage:
+            texto = getattr(msg_obj.extendedTextMessage, "text", "")
+
+        texto = texto.strip()
         if not texto:
             return
 
@@ -145,6 +174,9 @@ def on_message(cl: NewClient, message: MessageEv):
                 "Si tu cuenta presenta fallas, repórtalo en nuestra web:\n"
                 "👉 https://soporte-clickandcut.lovable.app"
             )
+
+    except Exception as e:
+        print(f"Error procesando mensaje: {e}")
 
     except Exception as e:
         print(f"Error procesando mensaje: {e}")
