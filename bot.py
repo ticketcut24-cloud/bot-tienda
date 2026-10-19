@@ -1,15 +1,34 @@
 import os
 import json
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 import qrcode
 from neonize.client import NewClient
 from neonize.events import MessageEv, ConnectedEv, QREv
 
+# --- SERVIDOR WEB PARA PLAN GRATIS ($0) EN RENDER ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot Click&Cut Store activo 24/7")
+
+def iniciar_servidor_web():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+
+# Iniciar servidor en segundo plano
+threading.Thread(target=iniciar_servidor_web, daemon=True).start()
+# ---------------------------------------------------
+
 # 1. Configuración de Administrador
 ADMIN_NUMBERS = ["5218641062059"]
 
-# 2. Rutas compatibles (Windows y Linux/Contenedor)
+# 2. Rutas compatibles
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "sesion_clickandcut.db")
 SALDOS_FILE = os.path.join(BASE_DIR, "saldos.json")
@@ -46,7 +65,7 @@ def registrar_cliente(numero, nombre="Cliente"):
         saldos[numero] = 0.0
         guardar_datos(SALDOS_FILE, saldos)
 
-# 3. Inicialización del Cliente
+# 3. Cliente WhatsApp
 client = NewClient(DB_PATH)
 
 @client.event(QREv)
@@ -64,24 +83,16 @@ def on_connected(_: NewClient, __: ConnectedEv):
     print(" ✅ Bot Click&Cut Store CONECTADO A WHATSAPP ")
     print("*"*45 + "\n")
 
-
-def on_message(cl: NewClient, message: MessageEv):
-    try:
-        if message.Info.IsFromMe:
-            return
 @client.event(MessageEv)
 def on_message(cl: NewClient, message: MessageEv):
     try:
-        # Validación de seguridad: ignorar si no contiene información básica de mensaje
         if not hasattr(message, "Info") or message.Info is None:
             return
 
-        # Verificar si el mensaje fue enviado por el propio bot
         is_from_me = getattr(message.Info, "IsFromMe", False)
         if is_from_me:
             return
 
-        # Obtener remitente de forma segura
         sender = getattr(message.Info, "Sender", None)
         if not sender:
             return
@@ -91,7 +102,6 @@ def on_message(cl: NewClient, message: MessageEv):
 
         push_name = getattr(message.Info, "PushName", "") or "Cliente"
 
-        # Extraer texto según los diferentes tipos de mensaje
         msg_obj = getattr(message, "Message", None)
         if not msg_obj:
             return
@@ -109,7 +119,7 @@ def on_message(cl: NewClient, message: MessageEv):
         registrar_cliente(remitente, push_name)
         es_admin = remitente in ADMIN_NUMBERS
 
-        # Comandos de Administrador
+        # Comandos Admin
         if es_admin:
             if texto.startswith(".recargar"):
                 partes = texto.split()
@@ -135,7 +145,7 @@ def on_message(cl: NewClient, message: MessageEv):
                     cl.reply_message(message, resumen)
                 return
 
-        # Comandos de Clientes
+        # Comandos Clientes
         if texto == ".menu":
             menu_msg = (
                 "🛍️ *Click&Cut Store - Menú*\n\n"
@@ -174,9 +184,6 @@ def on_message(cl: NewClient, message: MessageEv):
                 "Si tu cuenta presenta fallas, repórtalo en nuestra web:\n"
                 "👉 https://soporte-clickandcut.lovable.app"
             )
-
-    except Exception as e:
-        print(f"Error procesando mensaje: {e}")
 
     except Exception as e:
         print(f"Error procesando mensaje: {e}")
