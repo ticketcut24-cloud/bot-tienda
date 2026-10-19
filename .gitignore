@@ -1,0 +1,7 @@
+sesion_clickandcut.db*
+saldos.json
+pedidos.json
+clientes.json
+__pycache__/
+*.pyc
+.env
