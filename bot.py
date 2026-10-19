@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import io
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
@@ -8,27 +9,80 @@ import qrcode
 from neonize.client import NewClient
 from neonize.events import MessageEv, ConnectedEv, QREv
 
-# --- SERVIDOR WEB PARA PLAN GRATIS ($0) EN RENDER ---
+# Variable global para guardar la imagen del QR más reciente
+qr_image_bytes = None
+is_connected = False
+
+# --- SERVIDOR WEB: RENDER HEALTH CHECK + MOSTRAR QR LIMPIO ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        global qr_image_bytes, is_connected
+        
+        # Ruta para ver la imagen directa del QR
+        if self.path == "/qr.png":
+            if qr_image_bytes:
+                self.send_response(200)
+                self.send_header('Content-type', 'image/png')
+                self.end_headers()
+                self.wfile.write(qr_image_bytes)
+            else:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"No hay QR activo")
+            return
+
+        # Página de inicio con visor web y auto-refresco
         self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
+        self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
-        self.wfile.write(b"Bot Click&Cut Store activo 24/7")
+        
+        if is_connected:
+            html = """
+            <html>
+            <body style="font-family:sans-serif; text-align:center; padding-top:50px; background:#111; color:#fff;">
+                <h1 style="color:#25D366;">✅ Bot Conectado a WhatsApp</h1>
+                <p>El bot de Click&Cut Store esta activo y respondiendo mensajes.</p>
+            </body>
+            </html>
+            """
+        elif qr_image_bytes:
+            html = f"""
+            <html>
+            <head><meta http-equiv="refresh" content="5"></head>
+            <body style="font-family:sans-serif; text-align:center; padding-top:30px; background:#222; color:#fff;">
+                <h2>Escanear QR de Click&Cut Store</h2>
+                <p>Abre WhatsApp > Dispositivos vinculados > Vincular un dispositivo</p>
+                <div style="background:#fff; display:inline-block; padding:15px; border-radius:10px;">
+                    <img src="/qr.png?t={int(time.time())}" style="width:300px; height:300px; display:block;" />
+                </div>
+                <p style="color:#aaa; font-size:12px;">Esta pagina se actualiza sola cada 5 segundos si cambia el codigo.</p>
+            </body>
+            </html>
+            """
+        else:
+            html = """
+            <html>
+            <head><meta http-equiv="refresh" content="3"></head>
+            <body style="font-family:sans-serif; text-align:center; padding-top:50px; background:#222; color:#fff;">
+                <h2>Iniciando conexion...</h2>
+                <p>Generando codigo QR, espera unos segundos...</p>
+            </body>
+            </html>
+            """
+        self.wfile.write(html.encode("utf-8"))
 
 def iniciar_servidor_web():
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# Iniciar servidor en segundo plano
 threading.Thread(target=iniciar_servidor_web, daemon=True).start()
-# ---------------------------------------------------
+# -------------------------------------------------------------
 
 # 1. Configuración de Administrador
 ADMIN_NUMBERS = ["5218641062059"]
 
-# 2. Rutas compatibles
+# 2. Rutas
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "sesion_clickandcut.db")
 SALDOS_FILE = os.path.join(BASE_DIR, "saldos.json")
@@ -70,18 +124,21 @@ client = NewClient(DB_PATH)
 
 @client.event(QREv)
 def on_qr(_: NewClient, data: bytes):
-    qr = qrcode.QRCode()
-    qr.add_data(data)
-    print("\n" + "="*40)
-    print(" ESCANEA EL CÓDIGO QR CON TU WHATSAPP ")
-    print("="*40 + "\n")
-    qr.print_ascii(invert=True)
+    global qr_image_bytes
+    # Genera la imagen PNG limpia en memoria
+    img = qrcode.make(data)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr_image_bytes = buf.getvalue()
+    print("\n[INFO] Nuevo codigo QR generado y listo en la web.\n")
 
 @client.event(ConnectedEv)
 def on_connected(_: NewClient, __: ConnectedEv):
-    print("\n" + "*"*45)
+    global is_connected
+    is_connected = True
+    print("\n*********************************************")
     print(" ✅ Bot Click&Cut Store CONECTADO A WHATSAPP ")
-    print("*"*45 + "\n")
+    print("*********************************************\n")
 
 @client.event(MessageEv)
 def on_message(cl: NewClient, message: MessageEv):
@@ -89,8 +146,7 @@ def on_message(cl: NewClient, message: MessageEv):
         if not hasattr(message, "Info") or message.Info is None:
             return
 
-        is_from_me = getattr(message.Info, "IsFromMe", False)
-        if is_from_me:
+        if getattr(message.Info, "IsFromMe", False):
             return
 
         sender = getattr(message.Info, "Sender", None)
@@ -119,7 +175,6 @@ def on_message(cl: NewClient, message: MessageEv):
         registrar_cliente(remitente, push_name)
         es_admin = remitente in ADMIN_NUMBERS
 
-        # Comandos Admin
         if es_admin:
             if texto.startswith(".recargar"):
                 partes = texto.split()
@@ -145,7 +200,6 @@ def on_message(cl: NewClient, message: MessageEv):
                     cl.reply_message(message, resumen)
                 return
 
-        # Comandos Clientes
         if texto == ".menu":
             menu_msg = (
                 "🛍️ *Click&Cut Store - Menú*\n\n"
